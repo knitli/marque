@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 Knitli Inc.
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# =============================================================================
+# Mirror-sync exclude list  (marque-dev  ->  marque-prod, one-way)
+# =============================================================================
+# .gitignore stops UNTRACKED private files from being committed. It cannot
+# protect a TRACKED public file from being overwritten by the sync, so the
+# public-specific replacements below must be excluded at the COPY step.
+#
+# Use with rsync:
+#     rsync -a --delete --exclude-from=.mirror-exclude \
+#         /srv/coder/marque-dev/ /srv/coder/marque-prod/
+#
+# (rsync honors these patterns relative to the sync root. Keep this list in
+# sync with the "REPLACED" notes in .gitignore.)
+# =============================================================================
+
+# Public-specific files this repo owns — never overwrite with the dev copy:
+/README.md
+/CONTRIBUTING.md
+/.gitignore
+/.mirror-exclude
+/.github/workflows/assurance.yml
+# release.yml is a public-side REWRITE (consumes the synced versions +
+# CHANGELOG; the dev release.yml runs smart-release and must not land here):
+/.github/workflows/release.yml
+/.github/ISSUE_TEMPLATE/
+
+# Never copy the dev CI (the public assurance.yml replaces it):
+/.github/workflows/ci.yml
+
+# The mirror tooling itself lives in the private repo; never publish it:
+/scripts/mirror-to-public.sh
+
+# Belt-and-suspenders: also keep the private tree out of the copy entirely, so
+# nothing private ever lands in the working tree (not just uncommitted). These
+# mirror the drop-list in .gitignore.
+/.specify/
+/specs/
+/docs/plans/
+/claudedocs/
+/site/
+/.vscode/
+/.claude/
+/.gemini/
+/.autopilot/
+/.jules/
+/.git/
+/.mcp.json
+/.mcp.json.license
+/contextlint.config.json
+/contextlint.config.json.license
+/CLA.md
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
+/.github/agents/
+/.github/prompts/
+/.github/commands/
+/.github/codeql/
+/.github/CODEOWNERS
+/.github/dependabot.yml
+/.github/FUNDING.yml
+/.github/PULL_REQUEST_TEMPLATE.md
+/.github/workflows/claude.yml
+/.github/workflows/codeql.yml
+/.github/workflows/bench-nightly.yml
+/.github/workflows/fix-latency-weekly.yml
+/.github/workflows/gramine-smoke.yml
+/.github/workflows/masking-pin-cache-refresh.yml
+/.github/workflows/strip-ansi.yml
+/.github/workflows/throughput-sweep.yml
+/.github/workflows/throughput-weekly.yml

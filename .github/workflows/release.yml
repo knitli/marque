@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: 2026 Knitli Inc.
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Public release workflow.
+#
+# This repo is a squashed public mirror — it has NO conventional-commit
+# history, so it must NOT run smart-release or git-cliff. Version bumps and
+# CHANGELOG.md are computed UPSTREAM (private repo) by smart-release and arrive
+# via the per-release snapshot sync. This workflow only *consumes* that result:
+#
+#   1. publish to crates.io (cargo-workspaces, dependency order, idempotent)
+#   2. tag the synced release commit
+#   3. build the source archive + SBOMs FROM THE CLEAN PUBLIC TREE
+#      (git only exports tracked files, so nothing private can leak)
+#   4. attest (Sigstore) and cut the GitHub Release, notes from CHANGELOG.md
+#
+# Flow: dev runs `smart-release --no-publish` (bump + CHANGELOG, commit) ->
+# snapshot-sync to this repo -> dispatch this workflow.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Dry run (verify publish, no crates.io push, no GitHub release/tag)"
+        type: boolean
+        default: true
+      no-publish:
+        description: "Skip the crates.io publish but still cut the GitHub release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  # id-token: write — OIDC for crates.io token exchange (crates-io-auth-action)
+  # and Sigstore keyless signing (attest-build-provenance).
+  id-token: write
+  # attestations: write — lets attest-build-provenance record the signed
+  # attestation to GitHub's attestation store.
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Publish to crates.io + cut GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: cargo
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+
+      - name: Install release tooling
+        run: cargo install cargo-workspaces cargo-cyclonedx --locked
+
+      # The `marque` crate is the workspace version source.
+      - name: Resolve version
+        id: ver
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "marque") | .version')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing marque v${VERSION}"
+
+      # cargo-workspaces `--from-git` publishes every publishable workspace
+      # member at its current (already-bumped, synced) version, in dependency
+      # order, and skips any version already on crates.io — so re-running a
+      # partially-failed release is safe. `publish = false` crates are skipped
+      # automatically; the manifests are the source of truth, not a hardcoded
+      # crate list.
+      - name: Verify publish (dry run)
+        if: inputs.dry-run == true
+        run: cargo workspaces publish --from-git --allow-dirty --yes --dry-run
+
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18
+        id: auth
+        if: inputs.dry-run == false && inputs.no-publish == false
+
+      - name: Publish crates
+        if: inputs.dry-run == false && inputs.no-publish == false
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo workspaces publish --from-git --allow-dirty --yes
+
+      - name: Tag the release commit
+        if: inputs.dry-run == false
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already on remote — skipping"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+          fi
+
+      # Source archive built from the CLEAN public tree at the release commit.
+      # `git archive` exports tracked files only; private paths were never
+      # tracked here (.gitignore + the mirror sync), so the tarball is safe to
+      # publish. This is a workspace-state provenance artifact, NOT byte-
+      # identical to any crates.io per-crate tarball.
+      - name: Build source archive
+        if: inputs.dry-run == false
+        id: archive
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          ARCHIVE="marque-${VERSION}.tar.gz"
+          git archive --format=tar.gz --prefix="marque-${VERSION}/" -o "${ARCHIVE}" HEAD
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      # SBOMs, also from the clean tree:
+      #   - SPDX via `reuse spdx` (from REUSE annotations; NTIA-compliant)
+      #   - CycloneDX JSON+XML via `cargo cyclonedx` (full transitive graph)
+      - name: Generate SBOMs
+        if: inputs.dry-run == false
+        id: sbom
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          pipx install "reuse==6.2.0"
+          reuse spdx \
+            --output "marque-${VERSION}.spdx" \
+            --add-license-concluded \
+            --creator-organization "Knitli Inc."
+          cargo cyclonedx --format json --workspace \
+            --output-file "marque-${VERSION}.cyclonedx.json"
+          cargo cyclonedx --format xml --workspace \
+            --output-file "marque-${VERSION}.cyclonedx.xml"
+          echo "spdx=marque-${VERSION}.spdx" >> "$GITHUB_OUTPUT"
+          echo "cdx=marque-${VERSION}.cyclonedx.json" >> "$GITHUB_OUTPUT"
+          echo "cdxml=marque-${VERSION}.cyclonedx.xml" >> "$GITHUB_OUTPUT"
+
+      # Release notes come from the upstream-generated CHANGELOG.md (synced in).
+      # Slice the top-most version section; fall back to a pointer if absent.
+      - name: Assemble release notes
+        if: inputs.dry-run == false
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            awk '/^## /{n++} n==1{print} n==2{exit}' CHANGELOG.md > RELEASE_NOTES.md
+          else
+            echo "See CHANGELOG.md for changes in this release." > RELEASE_NOTES.md
+          fi
+          cat >> RELEASE_NOTES.md <<'EOF'
+
+          ---
+          Signed source archive + SBOMs are attached. The source archive is a
+          workspace-state provenance artifact from `git archive` at the release
+          tag — it is not byte-identical to any crates.io per-crate tarball.
+
+          Verify any artifact with the GitHub CLI:
+
+          ```
+          gh attestation verify <artifact> --owner knitli
+          ```
+          EOF
+
+      - name: Attest source archive
+        if: inputs.dry-run == false
+        uses: actions/attest-build-provenance@f14352a605c57b0a66e0d49bba5825967f1dbedf
+        with:
+          subject-path: ${{ steps.archive.outputs.archive }}
+
+      - name: Attest SBOMs
+        if: inputs.dry-run == false
+        uses: actions/attest-build-provenance@f14352a605c57b0a66e0d49bba5825967f1dbedf
+        with:
+          subject-path: |
+            ${{ steps.sbom.outputs.spdx }}
+            ${{ steps.sbom.outputs.cdx }}
+            ${{ steps.sbom.outputs.cdxml }}
+
+      - name: Create GitHub release
+        if: inputs.dry-run == false
+        uses: softprops/action-gh-release@9ed3cf9a6863b31f005d951c8d19de20628cf4eb
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            ${{ steps.archive.outputs.archive }}
+            ${{ steps.sbom.outputs.spdx }}
+            ${{ steps.sbom.outputs.cdx }}
+            ${{ steps.sbom.outputs.cdxml }}

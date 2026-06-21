@@ -1,0 +1,409 @@
+# SPDX-FileCopyrightText: 2026 Knitli Inc.
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Public assurance CI.
+#
+# The private repo's full CI lives in `ci.yml`, which is NOT mirrored
+# (see .gitignore). This is its public counterpart: it runs the same
+# correctness, supply-chain, license, WASM-safety, source-fidelity, and
+# performance gates so anyone reading the public mirror can see that every
+# synced commit is held to the project's assurance bar.
+#
+# Dropped vs. the private ci.yml (dev-process / contribution-only gates that
+# carry no public-trust signal, or that write to non-mirrored paths):
+#   - masking-pin-lint   (tracks internal issue numbers via the GitHub API)
+#   - flake-watch-cap    (internal flaky-test queue cap)
+#   - stub-engine-isolation (per-PR contribution discipline; this is a mirror)
+
+name: Assurance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assurance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Path-filter gate: one boolean per category of changed files so a docs- or
+  # config-only sync doesn't spin up the full Rust matrix / WASM build /
+  # supply-chain audit. Dependency-free git diff (scripts/ci-detect-changes.sh).
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      wasm: ${{ steps.filter.outputs.wasm }}
+      deps: ${{ steps.filter.outputs.deps }}
+      refs: ${{ steps.filter.outputs.refs }}
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Classify changed paths
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: bash scripts/ci-detect-changes.sh
+
+  check:
+    name: Format + Lint
+    timeout-minutes: 10
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "nightly"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+      - name: cargo fmt
+        run: cargo fmt --check
+      - name: typos
+        uses: crate-ci/typos@37bb98842b0d8c4ffebdb75301a13db0267cef89
+      - name: Audit-cleanup absence check (FR-037)
+        run: bash tools/audit-cleanup-check.sh
+      - name: Disabled-test-file check
+        run: bash tools/disabled-test-check.sh
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test
+    timeout-minutes: 25
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "nightly"
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-nextest
+      # `--all-features` so feature-gated suites run; `--exclude marque-wasm`
+      # is load-bearing — a workspace-wide feature union leaks decoder/corpus
+      # codepaths into the shared engine build that the WASM artifact is
+      # constitutionally forbidden to ship, breaking the parity oracles.
+      - name: cargo nextest (workspace, all features)
+        run: cargo nextest run --workspace --all-features --exclude marque-wasm --profile ci
+      - name: cargo nextest (marque-wasm)
+        run: cargo nextest run -p marque-wasm --profile ci
+
+  # FR-018 / Constitution VIII — citation fidelity. AST scan over
+  # `crates/*/src/**/*.rs` validating every `§X.Y pNN` reference against
+  # `crates/capco/docs/CAPCO-2016.md`. `--no-catalog` keeps it from writing
+  # the human-readable defect catalog (which targets a non-mirrored specs/
+  # path); the exit-code gate is what matters here.
+  citation-lint:
+    name: Citation lint (FR-018)
+    timeout-minutes: 5
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+        with:
+          workspaces: tools/citation-lint
+      - name: Run citation lint
+        run: |
+          cargo run --manifest-path tools/citation-lint/Cargo.toml --release -- \
+              "$GITHUB_WORKSPACE" --no-catalog
+
+  # FR-040 / D12 — only `Engine::fix_inner` may promote a FixProposal to an
+  # AppliedFix. AST scan asserting every production call site of
+  # `AppliedFix::__engine_promote` lives there.
+  promote-callsite-lint:
+    name: Promote-callsite lint (FR-040 + D12)
+    timeout-minutes: 5
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+        with:
+          workspaces: tools/promote-callsite-lint
+      - name: Run promote-callsite lint
+        run: |
+          cargo run --manifest-path tools/promote-callsite-lint/Cargo.toml --release -- \
+              --workspace-dir . --all
+
+  # FR-015 / CHK030 — pattern-anchored guards against forbidden source shapes
+  # that were migrated to documented vocabulary surfaces. Shell-only.
+  regression-grep:
+    name: regression-grep (FR-015 / CHK030)
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - name: Run regression-grep guards
+        run: ./tools/regression-grep/regression-grep.sh
+
+  wasm:
+    name: WASM build
+    timeout-minutes: 10
+    needs: [changes, check]
+    if: needs.changes.outputs.wasm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+      - uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa
+        with:
+          # v0.15.0: the action's `latest` default resolves to a 2020 build
+          # that predates the `--profile` flag wasm-size-check.sh relies on.
+          version: "v0.15.0"
+      - name: wasm-pack build
+        run: wasm-pack build crates/wasm --target web --profiling
+      # SC-008 parity: proves lint_native(host) == lint_native(wasm32) by
+      # re-running the parity corpus inside Node's WASM runtime.
+      - name: wasm-pack test --node (parity)
+        run: wasm-pack test --node crates/wasm
+      # Constitution III — WASM binary-size regression gate (+5% drift bound).
+      - name: wasm-size-check (release-web profile)
+        run: ./tools/wasm-size-check.sh
+      - uses: NiklasEi/wasm-opt-action@379437a7e494484c2c9af2c6280407c967dc2c3c
+        with:
+          file: crates/wasm/pkg/*.wasm
+          options: >-
+            --enable-bulk-memory-opt
+            --enable-bulk-memory
+            --enable-extended-const
+            --enable-multivalue
+            --enable-nontrapping-float-to-int
+            --enable-reference-types
+            --enable-sign-ext
+            --enable-simd
+            --enable-tail-call
+            --type-refining-gufa
+            --generate-global-effects
+            -O3
+            --monomorphize
+            --precompute-propagate
+            --low-memory-unused
+            --gufa
+            --vacuum
+            -O3
+            --converge
+            --strip-toolchain-annotations
+
+  deny:
+    name: Supply chain audit (licenses/bans/sources)
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-deny
+      # `check` omits `advisories`; the `audit` job is the single RustSec gate.
+      - name: cargo deny (workspace)
+        run: cargo deny check bans licenses sources
+
+  audit:
+    name: Supply chain audit (RustSec advisories)
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-audit
+      - name: cargo audit
+        run: cargo audit
+
+  vet:
+    name: Supply chain audit (cargo-vet)
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-vet
+      - name: cargo vet
+        id: cargo_vet
+        run: cargo vet --locked
+      - name: Show minimal cargo-vet fixup
+        if: ${{ steps.cargo_vet.outcome == 'failure' }}
+        run: bash tools/cargo-vet-regenerate-exemptions.sh
+
+  # Whitepaper §8.5 — the dependency-hygiene rule must hold independently for
+  # the WASM-safe subgraph. `deny.wasm-safe.toml` encodes the stricter
+  # allow-list; the `--exclude` list names every non-WASM-safe member.
+  deny-wasm-safe:
+    name: Supply chain audit (WASM-safe subgraph)
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-deny
+      - name: cargo deny (WASM-safe subgraph)
+        run: |
+          cargo deny \
+            --exclude-dev \
+            --exclude marque \
+            --exclude marque-config \
+            --exclude marque-engine \
+            --exclude marque-extract \
+            --exclude marque-server \
+            --exclude marque-test-utils \
+            --exclude marque-wasm \
+            check \
+            --config deny.wasm-safe.toml \
+            licenses bans sources
+
+  reuse:
+    name: REUSE compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      # pipx is pre-installed on ubuntu-latest; pin the version so a PyPI
+      # release can't cause a non-deterministic failure. Matches the version
+      # the release workflow uses for SBOM generation.
+      - name: Install reuse
+        run: pipx install "reuse==6.2.0"
+      - name: reuse lint
+        run: reuse lint
+
+  # Gap register #11 — SHA256 checksums on the vendored authoritative CAPCO
+  # references so any silent replacement trips CI. Principle VIII source.
+  refs-integrity:
+    name: Vendored reference integrity
+    timeout-minutes: 5
+    needs: changes
+    if: needs.changes.outputs.refs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - name: Verify CAPCO original references
+        run: |
+          cd crates/capco/docs/original-refs
+          sha256sum -c SHA256SUMS
+
+  coverage:
+    name: Coverage
+    timeout-minutes: 30
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      # Reclaim runner disk before the instrumented build (the --all-features
+      # llvm-cov build overran ubuntu-latest's default free space).
+      - name: Free up runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/share/swift \
+            "${RUNNER_TOOL_CACHE:-/opt/hostedtoolcache}" || true
+          df -h /
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "nightly"
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+      # `--cfg coverage_nightly` activates the `coverage(off)` markers on
+      # `mod tests` blocks; `cargo +nightly` overrides the 1.89 file pin so
+      # the `feature(coverage_attribute)` gate compiles. `--all-features
+      # --exclude marque-wasm` mirrors the `test` job.
+      - name: Generate coverage
+        env:
+          RUSTFLAGS: "--cfg coverage_nightly"
+        run: cargo +nightly llvm-cov nextest --workspace --all-features --exclude marque-wasm --codecov --output-path codecov.json
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          files: codecov.json
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Whitepaper §3.2 / Constitution II — hot-path heap-allocation regression
+  # gate. Counting global allocator asserts Scanner::scan stays within budget.
+  # `--test-threads=1` is load-bearing (the counter is process-wide).
+  count-allocs:
+    name: Hot-path alloc budget
+    timeout-minutes: 8
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+      - name: cargo test (alloc-budget gate)
+        run: |
+          cargo test -p marque-capco \
+            --features count-allocs \
+            --test alloc_budget \
+            -- --test-threads=1
+
+  # Constitution I / SC-001 / SC-002 — per-commit interactive-latency gates.
+  # `scripts/bench-check.sh --quick`: the fast ~10 KB subset (the heavy
+  # scaling sweeps run on a schedule in the private repo, not here).
+  bench-check:
+    name: Performance regression gates
+    timeout-minutes: 20
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@65012b490220f477f20ab979e35ae732e6de4e68
+      - name: scripts/bench-check.sh --quick
+        run: bash scripts/bench-check.sh --quick

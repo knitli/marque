@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 Knitli Inc.
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Code suggestion / improvement
+description: Suggest a change, improvement, or feature. We aren't taking PRs yet — suggest it here.
+title: "[suggestion]: "
+labels: ["suggestion", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We're **not accepting pull requests** on this mirror right now, but code
+        suggestions are genuinely welcome — paste your snippet, diff, or approach
+        below and we'll read it. See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The motivation — the use case, limitation, or pain point behind the suggestion.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the change. Concrete API shapes, behavior, or examples help.
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Code suggestion (optional)
+      description: A snippet, diff, or pseudocode showing what you have in mind.
+      render: rust
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, and why this one.
+    validations:
+      required: false

@@ -1,0 +1,155 @@
+# SPDX-FileCopyrightText: 2026 Knitli Inc.
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# =============================================================================
+# marque — PUBLIC mirror .gitignore
+# =============================================================================
+# This repository is a one-way public mirror of the private `marque` repo. Its
+# job is to serve releases and collect bug/issue reports. This file keeps the
+# private repo's internal IP, planning material, and AI/dev tooling out of the
+# public tree when content is synced over.
+#
+# IMPORTANT — gitignore only blocks UNTRACKED files from being committed. It
+# cannot protect a file that is REPLACED with a public-specific version
+# (CONTRIBUTING.md, README.md) because those are tracked here. Those two must
+# additionally be excluded by the mirror-sync step so the dev copy never
+# overwrites the public copy. See ".mirror-exclude" for the sync-layer list.
+# =============================================================================
+
+
+# ── Do NOT mirror: internal IP, planning, specs, and AI/dev tooling ──────────
+# Everything below is private. None of it belongs in the public mirror.
+/.specify/
+/specs/
+/docs/plans/
+/claudedocs/
+/site/
+
+# Editor / AI assistant tooling and configs
+/.vscode/
+/.claude/
+/.gemini/
+/.autopilot/
+/.jules/
+/.mcp.json
+/.mcp.json.license
+/contextlint.config.json
+/contextlint.config.json.license
+
+# Internal docs and agreements (CONTRIBUTING/README are handled below — they
+# are REPLACED, not dropped, so they are intentionally NOT listed here).
+/CLA.md
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
+
+# Public-specific replacements (TRACKED here, never overwritten by the sync):
+#   - /CONTRIBUTING.md  → "not accepting contributions; suggest via issues"
+#   - /README.md        → public placeholder until the first public release
+# These are deliberately absent from the ignore list. The mirror-sync step
+# (not this file) is responsible for not copying the dev versions over them.
+
+
+# ── .github/: allowlist only the public surface ─────────────────────────────
+# Everything under .github is internal/dev by default. Only the public release
+# + assurance workflows and the issue templates are published. Anything new the
+# private repo adds under .github (speckit agents/prompts, gemini commands,
+# claude.yml, codeql, bench/throughput/gramine workflows, the dev ci.yml,
+# CODEOWNERS, dependabot, FUNDING, PR template) is ignored automatically.
+/.github/*
+!/.github/workflows
+!/.github/ISSUE_TEMPLATE
+/.github/workflows/*
+!/.github/workflows/release.yml
+!/.github/workflows/assurance.yml
+
+
+# =============================================================================
+# Standard build artifacts, caches, and OS noise (carried from the dev repo)
+# =============================================================================
+
+*.local.toml
+*.env
+
+# Caches
+[Cc]ache/
+.[Cc]ache/
+
+# masking-pin-lint cache is intentionally tracked: D11 in the engine-rule
+# refactor decisions requires daily-refreshed cache files committed to the repo
+# so CI's cache-with-fallback path has data even when GitHub's API is
+# unreachable. The negation below carves that directory out of the generic
+# [Cc]ache/ rule above.
+!tools/masking-pin-lint/cache/
+!tools/masking-pin-lint/cache/**
+
+# proptest persistent failure seeds are intentionally tracked. Each
+# `*.proptest-regressions` file carries the seed of a real property-test
+# failure; checking them in makes the seed part of CI so the same input is
+# re-tried before any new shrink work. Do NOT add `*.proptest-regressions`
+# to this file.
+
+# Python bytecode (tools/perf/ and a few scripts are Python; running them
+# locally creates __pycache__/ directories).
+__pycache__/
+*.pyc
+
+# Packages
+node_modules/
+.venv/
+
+# Build artifacts
+target/
+dist/
+crates/**/generated/
+debug/
+.astro/
+.wrangler/
+
+*.spdx
+*:Zone.Identifier
+
+# General
+nohup.out
+.Trash-*
+.nfs*
+.fuse_hidden*
+[._]*.un~
+*~
+[._]*.sw[a-p][a-p]
+Session.vim
+Sessionx.vim
+*.lnk
+$RECYCLE.BIN/
+Thumbs*
+*.pdb
+**/*.rs.bk
+.cursorignore
+.cursorindexingignore
+.directory
+[Dd]esktop.ini
+*.stackdump
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcons.icns
+.com.apple.timemachine.donotpresent
+._*
+.history
+.history/
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon[*]
+
+# Worktrees
+worktrees/
+.worktrees/

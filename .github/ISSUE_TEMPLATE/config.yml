@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Knitli Inc.
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Funnel reporters into the structured templates above. We are not accepting
+# pull requests on this mirror, so blank issues are disabled to keep reports
+# actionable.
+blank_issues_enabled: false
+contact_links:
+  - name: Learn about marque
+    url: https://marque.tools
+    about: Project home — what marque is and where it's going.
+  - name: Security vulnerability
+    url: https://github.com/knitli/marque/security/policy
+    about: Do not open a public issue for security problems — disclose privately here.
