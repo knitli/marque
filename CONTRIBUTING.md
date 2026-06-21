@@ -10,7 +10,8 @@ Thanks for your interest in `marque`.
 
 This repository is a **public mirror**. Development happens in a separate
 private repository, and this mirror exists to **serve releases** and to
-**collect bug reports and suggestions**.
+**collect bug reports and suggestions**. We want everyone to be able to
+evaluate our code for themselves.
 
 ## We are not accepting code contributions right now
 
@@ -21,6 +22,13 @@ development happens.
 
 This may change in the future. If we reopen to contributions, this page will
 say so.
+
+> [!IMPORTANT]
+>
+> ## Don't File Security Reports in Issues
+>
+> Please do **not** file security vulnerabilities as public issues. Follow the
+> organization's [security policy](https://github.com/knitli/marque?tab=security-ov-file) for private disclosure instead.
 
 ## Code suggestions are welcome — in issues
 
@@ -36,13 +44,7 @@ helpful. Please **open an issue** rather than a pull request:
 
 [issues]: https://github.com/knitli/marque/issues/new/choose
 
-## Security issues
-
-Please do **not** file security vulnerabilities as public issues. Follow the
-organization's security policy for private disclosure instead.
 
 ## License
 
-`marque` is distributed under the terms in [`LICENSE.md`](./LICENSE.md). By
-opening an issue you're simply sharing feedback; you are not submitting a
-contribution under any contributor agreement.
+`marque` is distributed under the terms in [The Marque License](./LICENSE.md).
