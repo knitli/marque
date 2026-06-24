@@ -43,6 +43,7 @@
 /.specify/
 /specs/
 /docs/plans/
+/docs/perf/
 /claudedocs/
 /site/
 /target/
