@@ -27,12 +27,15 @@
 # CHANGELOG; the dev release.yml runs smart-release and must not land here):
 /.github/workflows/release.yml
 /.github/ISSUE_TEMPLATE/
+/.github/CODEOWNERS
 
 # Never copy the dev CI (the public assurance.yml replaces it):
 /.github/workflows/ci.yml
 
 # The mirror tooling itself lives in the private repo; never publish it:
 /scripts/mirror-to-public.sh
+/scripts/clean_ocr.py
+/scripts/update_license.py
 
 # Belt-and-suspenders: also keep the private tree out of the copy entirely, so
 # nothing private ever lands in the working tree (not just uncommitted). These
@@ -42,12 +45,15 @@
 /docs/plans/
 /claudedocs/
 /site/
+/target/
 /.vscode/
 /.claude/
 /.gemini/
 /.autopilot/
 /.jules/
 /.git/
+/.ruff_cache/
+/.worktrees/
 /.mcp.json
 /.mcp.json.license
 /contextlint.config.json
@@ -60,7 +66,6 @@
 /.github/prompts/
 /.github/commands/
 /.github/codeql/
-/.github/CODEOWNERS
 /.github/dependabot.yml
 /.github/FUNDING.yml
 /.github/PULL_REQUEST_TEMPLATE.md
@@ -68,8 +73,4 @@
 /.github/workflows/codeql.yml
 /.github/workflows/bench-nightly.yml
 /.github/workflows/fix-latency-weekly.yml
-/.github/workflows/gramine-smoke.yml
 /.github/workflows/masking-pin-cache-refresh.yml
-/.github/workflows/strip-ansi.yml
-/.github/workflows/throughput-sweep.yml
-/.github/workflows/throughput-weekly.yml
