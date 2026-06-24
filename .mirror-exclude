@@ -65,12 +65,11 @@
 /.github/agents/
 /.github/prompts/
 /.github/commands/
-/.github/codeql/
+# we bring in new dependencies in dev, not prod
 /.github/dependabot.yml
 /.github/FUNDING.yml
 /.github/PULL_REQUEST_TEMPLATE.md
 /.github/workflows/claude.yml
-/.github/workflows/codeql.yml
 /.github/workflows/bench-nightly.yml
 /.github/workflows/fix-latency-weekly.yml
 /.github/workflows/masking-pin-cache-refresh.yml
